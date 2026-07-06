@@ -5,7 +5,7 @@
 #include <iostream>
 
 // -------------------- Define STB solo en esta traduccion --------------------
-// stb_image.h se copia desde tus otros labs (shared/) - es header-only.
+// stb_image.h se copia desde nuestros labs (shared/).
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 
