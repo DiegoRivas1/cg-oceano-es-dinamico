@@ -1,9 +1,4 @@
 #pragma once
-// Camara.h
-// Camara orbital: rota alrededor de un punto objetivo (origen) usando
-// coordenadas esfericas (radio, yaw, pitch). Permite rotar, acercar/alejar
-// y consultar la matriz de vista, tal como pide el enunciado (2.5).
-
 #include "Matematica.h"
 
 class Camara {

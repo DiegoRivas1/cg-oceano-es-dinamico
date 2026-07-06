@@ -1,9 +1,5 @@
 #pragma once
-// GestorOlas.h
-// Patron Strategy: Oceano no sabe de donde vienen las olas, solo pide
-// obtenerOlas() a una FuenteOlas. Esto permite intercambiar el origen
-// (definicion manual en codigo vs carga desde data/spectrum.txt) sin
-// tocar la clase Oceano.
+
 
 #include <memory>
 #include <string>
@@ -26,11 +22,7 @@ private:
     std::vector<Ola> olas_;
 };
 
-// Olas cargadas desde un archivo de texto con formato:
-//   amplitud  direccion(rad)  frecuencia
-// (una ola por linea, separadas por espacio o tabulador).
-// El archivo no trae fase, asi que se genera aleatoriamente con una
-// semilla fija para que la animacion sea reproducible entre ejecuciones.
+
 class OlasDesdeArchivo : public FuenteOlas {
 public:
     explicit OlasDesdeArchivo(std::string rutaArchivo, unsigned semilla = 42u);
