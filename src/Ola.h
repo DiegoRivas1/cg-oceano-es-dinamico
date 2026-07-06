@@ -1,11 +1,4 @@
 #pragma once
-// Ola.h
-// Representa una unica ola sinusoidal segun la formula del enunciado:
-//   h(x,z,t) = A * cos( k*(x*cos(d) + z*sin(d)) - 2*pi*f*t + p )
-//   k = 4*pi^2*f^2 / 9.81
-//
-// La misma formula se evalua tanto aqui (CPU, usada por ejemplo para hacer
-// flotar al barco) como en el vertex shader (GPU, usada para deformar la malla).
 
 class Ola {
 public:
@@ -22,10 +15,10 @@ public:
 
 private:
     float amplitud_;
-    float direccion_;   // radianes
+    float direccion_;  
     float frecuencia_;
     float fase_;
-    float numeroOnda_;  // k, calculado a partir de la frecuencia
+    float numeroOnda_;  
 
     static constexpr float GRAVEDAD = 9.81f;
     static float calcularNumeroOnda(float frecuencia);
