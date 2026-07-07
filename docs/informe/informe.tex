@@ -40,93 +40,240 @@ escena.
 \newpage
 
 \section{Introducción}
-% Contexto del proyecto, objetivo general, tecnologías usadas (C++20, OpenGL
-% Core Profile 3.3, GLFW, GLAD, ImGui, CMake).
+Este trabajo presenta la implementación de un sistema de animación por
+computador que simula la superficie de un océano en movimiento. El proyecto
+fue desarrollado en C++20 usando OpenGL Core Profile (versión 3.3), GLFW
+para la gestión de ventanas/entrada, GLAD para la carga de funciones OpenGL,
+ImGui para controles en tiempo de ejecución y CMake como sistema de build.
 
-\section{Generación de la Malla}
-% Explicar la malla regular sobre el plano xz: resolución elegida (filas x
-% columnas), separación entre puntos, cómo se arma el buffer de vértices e
-% índices (dos triángulos por celda).
+El objetivo principal fue desplazar el cálculo de alturas y normales de la
+superficie al GPU (vertex shader) para poder simular la superposición de
+19 olas sinusoidales en tiempo real sobre una malla razonablemente densa.
+
+\section{Generación de la malla}
+La superficie del océano se representa como una malla regular de triángulos
+sobre el plano $xz$. La malla se construye en `Oceano::construirMalla(...)`
+en `src/Oceano.cpp` y se sube UNA sola vez a la GPU. Cada vértice guarda la
+posición base $(x,0,z)$ y las coordenadas UV; la componente $y$ (altura) y la
+normal se calculan en el vertex shader cada frame.
+
+Detalles implementativos relevantes:
+- Resolución: configurable al construir (`filas` x `columnas`).
+- Separación entre puntos: parámetro `separacion` pasado al builder.
+- Índices: se crean dos triángulos por celda y se suben como EBO (ver
+  `glDrawElements`).
+
+Fragmento (resumen) de la creación de vértices/índices en `Oceano.cpp`:
+\begin{lstlisting}[language=C,caption={Generación de vértices e índices en Oceano::construirMalla}]
+for (int fila = 0; fila < filas; ++fila) {
+    for (int col = 0; col < columnas; ++col) {
+        PuntoMalla p{};
+        p.x = col * separacion - anchoTotal * 0.5f;
+        p.y = 0.0f; // altura base, se actualiza en el shader
+        p.z = fila * separacion - largoTotal * 0.5f;
+        p.s = float(col) / (columnas - 1);
+        p.t = float(fila) / (filas - 1);
+        vertices.push_back(p);
+    }
+}
+// creación de índices (dos triángulos por celda) y subida a GPU (VBO,EBO,VAO)
+\end{lstlisting}
 
 \subsection{Estructura de datos}
-% PuntoMalla: por qué solo guarda posición base + UV (y no normal), dado que
-% la altura/normal se recalculan en GPU cada frame.
+La estructura `PuntoMalla` (definida en `src/PuntoMalla.h`) almacena la
+posición base $(x,0,z)$ y las coordenadas UV `(s,t)`. No se almacena la
+normal ni la altura porque ambas se calculan analíticamente en el vertex
+shader cada frame, reduciendo la transferencia CPU→GPU y mejorando el
+rendimiento cuando se usan muchas olas.
 
-\section{Modelo Matemático de las Olas}
-% Reproducir la fórmula del enunciado:
+\section{Modelo matemático de las olas}
+La altura de la superficie se modela como la superposición de $n$ olas
+sinusoidales:
 \begin{equation}
-    h(x, z, t) = \sum_{i=1}^{n} A_i \cos\big(k_i (x\cos(d_i) + z\sin(d_i)) - 2\pi f_i t + p_i\big)
+    h(x, z, t) = \sum_{i=1}^{n} A_i \cos\big(k_i (x\cos d_i + z\sin d_i) - 2\pi f_i t + p_i\big)
 \end{equation}
+con
 \begin{equation}
-    k_i = \frac{4\pi^2 f_i^2}{9.81}
+    k_i = \frac{4\pi^2 f_i^2}{g},\quad g = 9.81\ \mathrm{m/s^2}
 \end{equation}
-% Explicar de dónde salen los parámetros: archivo data/spectrum.txt (19
-% olas, columnas amplitud/dirección/frecuencia) y que la fase se generó
-% aleatoriamente con semilla fija para reproducibilidad.
 
-\subsection{Cálculo en GPU vs. CPU}
-% Justificar la decisión: 19 olas x malla de ~150x150 puntos x 60fps es
-% mucho para hacerlo en CPU cada frame; se mueve el cómputo al vertex
-% shader. Mostrar fragmento relevante de oceano.vert.
-\begin{lstlisting}[language=C, caption={Fragmento de oceano.vert: cálculo de altura y normal analítica}]
+Parámetros:
+- $A_i$: amplitud (metros)
+- $d_i$: dirección en radianes
+- $f_i$: frecuencia (Hz)
+- $p_i$: fase inicial (se genera aleatoriamente con semilla fija para
+  reproducibilidad)
+
+Los parámetros provienen de `data/spectrum.txt`, que contiene 3 columnas
+(`amplitud direccion(rad) frecuencia`) — por defecto se cargan 19 olas.
+
+\subsection{Cálculo en GPU vs CPU}
+Para permitir 19 olas sobre una malla de ~150×150 vértices a 60 fps, el cálculo
+de altura y normales se hace en el vertex shader (`shaders/oceano.vert`). El
+CPU sólo prepara arrays de parámetros (amplitud, dirección, frecuencia,
+número de onda y fase) y los sube como uniforms. En el shader se itera sobre
+las olas y se suma su contribución.
+
+Fragmento del vertex shader (cálculo de altura y de las derivadas parciales):
+\begin{lstlisting}[language=C,caption={Fragmento de `shaders/oceano.vert`: altura y derivadas para la normal}]
 for (int i = 0; i < numOlas; ++i) {
-    float faseTotal = numeroOnda[i] * (x*dirX + z*dirZ)
-                     - DOS_PI * frecuencia[i] * tiempo + fase[i];
+    float dirX = cos(direccion[i]);
+    float dirZ = sin(direccion[i]);
+    float k = numeroOnda[i];
+    float faseTotal = k * (x * dirX + z * dirZ) - DOS_PI * frecuencia[i] * tiempo + fase[i];
     altura += amplitud[i] * cos(faseTotal);
-    float derivComun = -amplitud[i] * numeroOnda[i] * sin(faseTotal);
+    float derivComun = -amplitud[i] * k * sin(faseTotal);
     dHdx += derivComun * dirX;
     dHdz += derivComun * dirZ;
 }
 normal = normalize(vec3(-dHdx, 1.0, -dHdz));
 \end{lstlisting}
 
-\section{Cálculo de Normales}
-% Explicar la normal analítica: derivar h(x,z,t) respecto a x y z, y por
-% qué normalize(-dh/dx, 1, -dh/dz) es la normal de la superficie
-% parametrizada (x, h(x,z), z). Comparar brevemente con la alternativa de
-% promediar normales de caras vecinas (usada en cg-labs anteriores).
+\section{Cálculo de normales}
+La normal de la superficie parametrizada por $(x, h(x,z), z)$ se obtiene a
+partir de las tangentes:
+\begin{align*}
+\mathbf{t}_x &= (1, \partial h/\partial x, 0) \\
+\mathbf{t}_z &= (0, \partial h/\partial z, 1)
+\end{align*}
+la normal es proporcional a $\mathbf{t}_z \times \mathbf{t}_x = (-\partial h/\partial x, 1, -\partial h/\partial z)$
+por eso en el shader se normaliza `vec3(-dHdx, 1.0, -dHdz)`.
+
+Esta aproximación analítica es más precisa y robusta que estimar normales
+promediando normales de caras adyacentes cuando la altura está siendo
+modificada dinámicamente en cada frame.
 
 \section{Texturizado}
-% ocean.tga (1024x1024), carga con stb_image, coordenadas s,t generadas al
-% construir la malla, animación de UV con offset en el tiempo para dar
-% sensación de flujo. Incluir captura con textura activada/desactivada (T).
+La textura del agua `textures/ocean.tga` se carga con `stb_image` en
+`Oceano::cargarTextura(...)`. Las coordenadas UV se generan al construir la
+malla y en el fragment shader se aplica un desplazamiento dependiente del
+tiempo para simular el flujo del agua:
+\begin{lstlisting}[language=C,caption={Animación de UV en `shaders/oceano.frag`}]
+vec2 uvAnimado = uv + vec2(tiempo * 0.02, tiempo * 0.015);
+colorBase = texture(texturaOceano, uvAnimado).rgb;
+\end{lstlisting}
 
-\section{Iluminación y Materiales}
-% Modelo Phong: componente ambiental + difusa + especular. Justificar los
-% valores elegidos para el océano (especular alto para simular brillos en
-% el agua). Mencionar la segunda fuente de luz aportada por el faro.
+En tiempo de ejecución se puede activar/desactivar la textura con la tecla
+`T` (ver controles en la sección siguiente).
+
+\section{Iluminación y materiales}
+Se implementó un modelo Phong clásico en `shaders/oceano.frag` con componentes
+ambiente, difusa y especular. Los colores y el exponente de brillo (`brillo`)
+se fijan en `Oceano::dibujar` (valores por defecto: ambiente `0.15,0.2,0.25`,
+difuso `0.05,0.25,0.35`, especular blanco y `brillo=64`).
+
+Además existe una segunda fuente de luz (el faro) cuyo comportamiento y
+posición están definidos en `src/Faro.cpp` y se pasa como `posLuz` al
+`Oceano::dibujar`.
 
 \section{Cámara}
-% Cámara orbital: coordenadas esféricas (radio, yaw, pitch), controles de
-% mouse (rotar) y scroll (zoom).
+Se utilizó una cámara orbital (`src/Camara.cpp`) que representa la vista con
+coordenadas esféricas (radio, yaw, pitch). Controles:
+- Rotar: click izquierdo + arrastrar
+- Zoom: scroll del ratón
 
-\section{Elementos Adicionales}
+\section{Elementos adicionales}
+Además del océano, la escena contiene varios elementos que interactúan con
+la superficie:
+
 \subsection{Barco}
-% Cómo se arma (casco+mástil+vela) y cómo flota muestreando
-% Oceano::alturaEn(x,z).
-\subsection{Isla y Rocas}
-% Generación procedural con semilla fija.
+El `Barco` (archivo `src/Barco.cpp`) es un objeto compuesto (casco, mástil,
+mástil, vela) que flota muestreando `Oceano::alturaEn(x,z)` bajo su posición. Para
+simular balanceo se calcula la pendiente local del océano tomando pequeñas
+perturbaciones alrededor de su posición y ajustando la orientación en
+consecuencia.
+
+\subsection{Isla y rocas}
+La isla y las rocas se generan proceduralmente usando una semilla fija, por
+lo que la geometría es reproducible entre ejecuciones (útil para generar
+escenas y grabar video de entrega).
+
 \subsection{Faro}
-% Torre+cúpula, aporte de una segunda luz puntual con parpadeo.
+El faro está modelado como una composición de primitivas y añade una segunda
+fuente de luz puntual. Opcionalmente parpadea para dar realismo.
+
 \subsection{Skybox}
-% Cúpula con gradiente de color como alternativa a un cubemap externo.
+En lugar de usar un cubemap, se renderiza una cúpula con un gradiente de
+color para simular el cielo.
 
-\section{Patrones de Diseño Aplicados}
-% Strategy (FuenteOlas), Builder (Oceano::Builder), Factory Method
-% (ElementoEscenaFactory), Composición (ObjetoRenderizable, Escena).
-% Justificar brevemente por qué cada patrón encaja en su rol.
+\section{Patrones de diseño aplicados}
+- Strategy: `FuenteOlas` / `OlasDesdeArchivo` / `OlasManual` permiten cambiar
+  la fuente de olas sin modificar `Oceano`.
+- Builder: `Oceano::Builder` facilita construir el `Oceano` con parámetros
+  opcionales (tamano, separacion, textura, shaders).
+- Factory Method: `ElementoEscenaFactory` crea elementos (barco, isla, faro)
+  según configuración.
+- Composición: `ObjetoRenderizable` y `Escena` agrupan mallas, shaders y
+  responsabilidades de dibujo.
 
-\section{Resultados}
-% Capturas de pantalla del océano en distintos momentos de la animación,
-% con y sin textura/iluminación, distintos ángulos de cámara.
+\section{Compilación y ejecución}
+Requisitos principales:
+- Toolchain MSYS2 UCRT64 (o equivalente con GLFW, OpenGL)
+- GLFW (instalar con pacman en MSYS2: `pacman -S mingw-w64-ucrt-x86_64-glfw`)
+
+Desde CLion: abrir el proyecto y usar el toolchain MSYS2 UCRT64. El
+`CMakeLists.txt` ya incluye las dependencias vendoreadas (`glad`, `imgui`
+en `external/`) y copia `shaders/`, `textures/` y `data/` al directorio del
+ejecutable en cada build.
+
+Línea de comandos (ejemplo con CMake + Ninja en MSYS2):
+\begin{verbatim}
+mkdir build; cd build
+cmake -G Ninja -DCMAKE_BUILD_TYPE=Release ..
+cmake --build .
+\end{verbatim}
+
+El ejecutable resultante es `cg_oceano` (o `cg_oceano.exe` en Windows).
+
+\section{Controles}
+Los controles de la aplicación son:
+\begin{itemize}
+  \item Rotar cámara: click izquierdo + arrastrar
+  \item Zoom: scroll del mouse
+  \item Alternar textura: tecla `T`
+  \item Alternar iluminación: tecla `L`
+  \item Aumentar/reducir velocidad de animación: `+` / `-` o mediante ImGui
+  \item Salir: `Esc`
+\end{itemize}
+
+\section{Resultados y capturas}
+Incluya aquí las capturas de pantalla que quiera mostrar. Cree la carpeta
+`docs/informe/images/` y coloque las imágenes con nombres claros
+(`captura_1.png`, `captura_textura_off.png`, `captura_barco.png`, ...).
+Ejemplos de inclusión:
+\begin{figure}[h!]
+  \centering
+  \includegraphics[width=0.8\textwidth]{images/captura_1.png}
+  \caption{Vista general del océano (textura ON, iluminación ON).}
+\end{figure}
+
+\begin{figure}[h!]
+  \centering
+  \includegraphics[width=0.48\textwidth]{images/captura_textura_off.png}
+  \includegraphics[width=0.48\textwidth]{images/captura_textura_on.png}
+  \caption{Comparación textura apagada/encendida (tecla T).}
+\end{figure}
+
+Consejos para capturas: utilice resoluciones altas (ej. 1920×1080), capture
+momentos con crestas pronunciadas y distintos ángulos (cerca del barco,
+vista cenital, etc.).
 
 \section{Conclusiones}
-% Dificultades encontradas, aprendizajes, posibles mejoras (ej. espuma en
-% las crestas, reflejo/refracción con render-to-texture, LOD de la malla).
+Se logró desplazar el cómputo crítico (altura y normales) al GPU, permitiendo
+simular la superposición de 19 olas en tiempo real sobre mallas de tamaño
+moderado. Aprendizajes clave: manejo de uniforms array en GLSL, cálculo
+analítico de normales y trade-offs entre precisión y rendimiento.
+
+Mejoras futuras:
+- Añadir espuma en crestas (por ejemplo con mapas de ruido y umbral sobre la
+  curvatura de la superficie).
+- Implementar reflejos/refracciones mediante render-to-texture y sampling
+  de entorno.
+- Nivel de detalle (LOD) para la malla según distancia a la cámara.
 
 \section{Referencias}
-% Enunciado del proyecto, documentación de OpenGL/GLSL, Fournier & Reeves
-% (1986) "A simple model of ocean waves" si se cita el modelo de suma de
-% senoides, etc.
+Documentación oficial de OpenGL/GLSL, ejemplos de ImGui y GLFW, y la nota
+original sobre modelos simples de olas (Fournier \& Reeves, 1986) si se
+requiere una referencia académica.
 
 \end{document}
