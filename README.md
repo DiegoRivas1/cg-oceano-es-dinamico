@@ -1,6 +1,6 @@
 # cg-oceano-dinamico
 
-Proyecto Final 1  Computación Gráfica (UNSA-EPCC).
+
 Sistema de animación por computador de un océano en movimiento, usando OpenGL Core Profile + GLSL.
 
 ## Descripción
@@ -16,14 +16,14 @@ kᵢ = 4π²fᵢ² / 9.81
 
 A diferencia de los labs anteriores (immediate mode / CPU), aquí la altura y
 la normal de cada vértice se calculan **en el vertex shader (GPU)**, una vez
-por vértice por frame, es más eficiente con 19 olas y una malla de ~150×150 puntos.
+por vértice por frame — más eficiente con 19 olas y una malla de ~150×150 puntos.
 
 ## Estructura de clases
 
 | Clase | Responsabilidad |
 |---|---|
 | `Ola` | Una ola individual: amplitud, dirección, frecuencia, fase, número de onda. También evalúa `altura(x,z,t)` en CPU (usada por el barco para flotar). |
-| `FuenteOlas` / `OlasManual` / `OlasDesdeArchivo` | **Patrón Strategy**  origen de las olas (código vs. `spectrum.txt`), intercambiable sin tocar `Oceano`. |
+| `FuenteOlas` / `OlasManual` / `OlasDesdeArchivo` | **Patrón Strategy** origen de las olas (código vs. `spectrum.txt`), intercambiable sin tocar `Oceano`. |
 | `PuntoMalla` | Vértice base de la malla: posición `(x,0,z)` + UV `(s,t)`. |
 | `Oceano` | Construye la malla, sube uniforms de olas, dibuja. Se construye con **`Oceano::Builder`**. |
 | `Shader` | Wrapper de compilación/enlace de programas GLSL y subida de uniforms. |
@@ -36,7 +36,7 @@ por vértice por frame, es más eficiente con 19 olas y una malla de ~150×150 p
 
 ## Elementos adicionales de la escena
 
-- **Barco**  flota muestreando `Oceano::alturaEn(x,z)` bajo su posición, con balanceo según la pendiente local.
+- **Barco** flota muestreando `Oceano::alturaEn(x,z)` bajo su posición, con balanceo según la pendiente local.
 - **Isla + rocas** generación procedural con semilla fija (reproducible).
 - **Faro** además decorativo, expone `posicionLuz()` como segunda fuente de luz (parpadeo incluido).
 - **Skybox** cúpula con gradiente de color (sin depender de texturas cubemap externas).
