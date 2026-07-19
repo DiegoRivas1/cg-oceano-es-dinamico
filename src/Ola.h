@@ -7,6 +7,8 @@ public:
     // Altura de esta ola sola, en el punto (x,z) en el instante t.
     float altura(float x, float z, float tiempo) const;
 
+    void gradiente(float x, float z, float tiempo, float& dHdx, float& dHdz) const;
+
     float amplitud() const   { return amplitud_; }
     float direccion() const  { return direccion_; }
     float frecuencia() const { return frecuencia_; }
